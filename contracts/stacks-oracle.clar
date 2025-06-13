@@ -370,3 +370,99 @@
     )
   )
 )
+
+;; ADVANCED QUERY INTERFACE
+
+;; Comprehensive Market Information Retrieval
+(define-read-only (get-market-details (market-id uint))
+  (match (map-get? markets market-id)
+    market (let (
+        (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+        (current-block stacks-block-height)
+      )
+      (ok (merge market {
+        total-pool: total-pool,
+        up-percentage: (if (> total-pool u0)
+          (/ (* (get total-up-stake market) u100) total-pool)
+          u50
+        ),
+        down-percentage: (if (> total-pool u0)
+          (/ (* (get total-down-stake market) u100) total-pool)
+          u50
+        ),
+        is-active: (and
+          (>= current-block (get start-block market))
+          (< current-block (get end-block market))
+          (not (get resolved market))
+        ),
+        time-remaining: (if (< current-block (get end-block market))
+          (- (get end-block market) current-block)
+          u0
+        ),
+        market-age: (- current-block (get creation-block market)),
+      }))
+    )
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; Enhanced User Prediction Analytics
+(define-read-only (get-user-prediction-details
+    (market-id uint)
+    (user principal)
+  )
+  (match (map-get? user-predictions {
+    market-id: market-id,
+    user: user,
+  })
+    prediction (match (map-get? markets market-id)
+      market (let (
+          (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+          (user-stake (get stake prediction))
+        )
+        (ok (merge prediction {
+          stake-percentage: (if (> total-pool u0)
+            (/ (* user-stake u100) total-pool)
+            u0
+          ),
+          potential-return: (if (and (> total-pool u0) (> user-stake u0))
+            (if (is-eq (get prediction prediction) PREDICTION_UP)
+              (/ total-pool (get total-up-stake market))
+              (/ total-pool (get total-down-stake market))
+            )
+            u0
+          ),
+        }))
+      )
+      ERR_MARKET_NOT_FOUND
+    )
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; Comprehensive User Performance Metrics
+(define-read-only (get-user-stats (user principal))
+  (let ((stats (default-to {
+      total-predictions: u0,
+      total-winnings: u0,
+      total-losses: u0,
+      win-rate: u0,
+      last-activity: u0,
+    }
+      (map-get? user-stats user)
+    )))
+    (ok (merge stats {
+      net-profit: (if (>= (get total-winnings stats) (get total-losses stats))
+        (- (get total-winnings stats) (get total-losses stats))
+        u0
+      ),
+      total-volume: (+ (get total-winnings stats) (get total-losses stats)),
+      profit-margin: (if (> (+ (get total-winnings stats) (get total-losses stats)) u0)
+        (/ (* (- (get total-winnings stats) (get total-losses stats)) u100)
+          (+ (get total-winnings stats) (get total-losses stats))
+        )
+        u0
+      ),
+    }))
+  )
+)
