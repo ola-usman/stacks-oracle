@@ -190,3 +190,84 @@
     (ok market-id)
   )
 )
+
+;; Submit Prediction with Advanced Stake Management
+(define-public (make-prediction
+    (market-id uint)
+    (prediction (string-ascii 4))
+    (stake uint)
+  )
+  (let (
+      (market (unwrap! (map-get? markets market-id) ERR_MARKET_NOT_FOUND))
+      (current-block stacks-block-height)
+      (existing-prediction (map-get? user-predictions {
+        market-id: market-id,
+        user: tx-sender,
+      }))
+    )
+    ;; Comprehensive Validation Suite
+    (asserts! (not (var-get protocol-paused)) ERR_PROTOCOL_PAUSED)
+    (asserts!
+      (and
+        (>= current-block (get start-block market))
+        (< current-block (get end-block market))
+      )
+      ERR_MARKET_CLOSED
+    )
+    (asserts!
+      (or (is-eq prediction PREDICTION_UP) (is-eq prediction PREDICTION_DOWN))
+      ERR_INVALID_PREDICTION
+    )
+    (asserts! (>= stake (var-get minimum-stake)) ERR_INSUFFICIENT_STAKE)
+    (asserts! (>= (stx-get-balance tx-sender) stake) ERR_INSUFFICIENT_BALANCE)
+    (asserts! (not (get resolved market)) ERR_MARKET_CLOSED)
+    ;; Advanced Stake Management & Tracking
+    (let (
+        (final-stake (if (is-some existing-prediction)
+          (+ stake (get stake (unwrap-panic existing-prediction)))
+          stake
+        ))
+        (is-new-participant (is-none existing-prediction))
+      )
+      ;; Execute Stake Transfer
+      (try! (stx-transfer? stake tx-sender (as-contract tx-sender)))
+      ;; Update User Prediction Record
+      (map-set user-predictions {
+        market-id: market-id,
+        user: tx-sender,
+      } {
+        prediction: prediction,
+        stake: final-stake,
+        claimed: false,
+        timestamp: current-block,
+        block-height: current-block,
+      })
+      ;; Update Market State & Analytics
+      (map-set markets market-id
+        (merge market {
+          total-up-stake: (if (is-eq prediction PREDICTION_UP)
+            (+ (get total-up-stake market) stake)
+            (get total-up-stake market)
+          ),
+          total-down-stake: (if (is-eq prediction PREDICTION_DOWN)
+            (+ (get total-down-stake market) stake)
+            (get total-down-stake market)
+          ),
+          total-participants: (if is-new-participant
+            (+ (get total-participants market) u1)
+            (get total-participants market)
+          ),
+        })
+      )
+      ;; Update Global Protocol Metrics
+      (var-set total-volume (+ (var-get total-volume) stake))
+      ;; Update User Activity Statistics
+      (update-user-activity tx-sender)
+      (ok {
+        market-id: market-id,
+        total-stake: final-stake,
+        participants: (get total-participants market),
+      })
+    )
+  )
+)
