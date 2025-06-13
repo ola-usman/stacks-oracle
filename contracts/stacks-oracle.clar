@@ -271,3 +271,102 @@
     )
   )
 )
+
+;; Oracle-Verified Market Resolution
+(define-public (resolve-market
+    (market-id uint)
+    (end-price uint)
+  )
+  (let (
+      (market (unwrap! (map-get? markets market-id) ERR_MARKET_NOT_FOUND))
+      (current-block stacks-block-height)
+    )
+    ;; Oracle Authorization & Validation
+    (asserts! (is-eq tx-sender (var-get oracle-address)) ERR_ORACLE_ONLY)
+    (asserts! (>= current-block (get end-block market)) ERR_MARKET_CLOSED)
+    (asserts! (not (get resolved market)) ERR_ALREADY_RESOLVED)
+    (asserts! (> end-price u0) ERR_INVALID_PRICE)
+    ;; Execute Market Resolution
+    (map-set markets market-id
+      (merge market {
+        end-price: end-price,
+        resolved: true,
+        resolution-block: current-block,
+      })
+    )
+    ;; Update Active Markets Counter
+    (var-set active-markets-count (- (var-get active-markets-count) u1))
+    ;; Calculate and Store Market Analytics
+    (calculate-market-analytics market-id market end-price)
+    (ok {
+      market-id: market-id,
+      end-price: end-price,
+      resolution-block: current-block,
+    })
+  )
+)
+
+;; Advanced Winnings Distribution System
+(define-public (claim-winnings (market-id uint))
+  (let (
+      (market (unwrap! (map-get? markets market-id) ERR_MARKET_NOT_FOUND))
+      (prediction (unwrap!
+        (map-get? user-predictions {
+          market-id: market-id,
+          user: tx-sender,
+        })
+        ERR_MARKET_NOT_FOUND
+      ))
+    )
+    ;; Claim Eligibility Validation
+    (asserts! (get resolved market) ERR_MARKET_NOT_RESOLVED)
+    (asserts! (not (get claimed prediction)) ERR_ALREADY_CLAIMED)
+    (let (
+        (winning-prediction (if (> (get end-price market) (get start-price market))
+          PREDICTION_UP
+          PREDICTION_DOWN
+        ))
+        (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+        (winning-pool (if (is-eq winning-prediction PREDICTION_UP)
+          (get total-up-stake market)
+          (get total-down-stake market)
+        ))
+        (user-stake (get stake prediction))
+      )
+      ;; Winner Validation & Pool Verification
+      (asserts! (is-eq (get prediction prediction) winning-prediction)
+        ERR_INVALID_PREDICTION
+      )
+      (asserts! (> winning-pool u0) ERR_INVALID_PARAMETER)
+      (let (
+          ;; Advanced Payout Calculation
+          (gross-winnings (/ (* user-stake total-pool) winning-pool))
+          (platform-fee (/ (* gross-winnings (var-get platform-fee-percentage)) u100))
+          (net-payout (- gross-winnings platform-fee))
+        )
+        ;; Execute Financial Transfers
+        (try! (as-contract (stx-transfer? net-payout (as-contract tx-sender) tx-sender)))
+        (try! (as-contract (stx-transfer? platform-fee (as-contract tx-sender) CONTRACT_OWNER)))
+        ;; Update User Prediction Status
+        (map-set user-predictions {
+          market-id: market-id,
+          user: tx-sender,
+        }
+          (merge prediction { claimed: true })
+        )
+        ;; Update Comprehensive User Statistics
+        (update-user-stats tx-sender net-payout true)
+        ;; Update Global Protocol Metrics
+        (var-set total-fees-collected
+          (+ (var-get total-fees-collected) platform-fee)
+        )
+        (var-set total-payouts (+ (var-get total-payouts) net-payout))
+        (ok {
+          payout: net-payout,
+          fee: platform-fee,
+          return-multiple: (/ gross-winnings user-stake),
+        })
+      )
+    )
+  )
+)
