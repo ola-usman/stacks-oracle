@@ -77,3 +77,116 @@
 (define-data-var platform-fee-percentage uint u2) ;; 2% platform fee
 (define-data-var market-counter uint u0)
 (define-data-var protocol-paused bool false)
+
+;; Protocol Analytics & Statistics
+(define-data-var total-volume uint u0)
+(define-data-var total-fees-collected uint u0)
+(define-data-var total-payouts uint u0)
+(define-data-var active-markets-count uint u0)
+
+;; DATA ARCHITECTURE
+
+;; Comprehensive Market Data Structure
+(define-map markets
+  uint
+  {
+    creator: principal,
+    asset-name: (string-ascii 32),
+    start-price: uint,
+    end-price: uint,
+    total-up-stake: uint,
+    total-down-stake: uint,
+    start-block: uint,
+    end-block: uint,
+    resolution-block: uint,
+    resolved: bool,
+    total-participants: uint,
+    creation-block: uint,
+  }
+)
+
+;; Enhanced User Prediction Tracking
+(define-map user-predictions
+  {
+    market-id: uint,
+    user: principal,
+  }
+  {
+    prediction: (string-ascii 4),
+    stake: uint,
+    claimed: bool,
+    timestamp: uint,
+    block-height: uint,
+  }
+)
+
+;; User Performance Analytics
+(define-map user-stats
+  principal
+  {
+    total-predictions: uint,
+    total-winnings: uint,
+    total-losses: uint,
+    win-rate: uint,
+    last-activity: uint,
+  }
+)
+
+;; Market Performance Metrics
+(define-map market-analytics
+  uint
+  {
+    participation-rate: uint,
+    volatility-score: uint,
+    final-odds: uint,
+    resolution-time: uint,
+  }
+)
+
+;; CORE MARKET OPERATIONS
+
+;; Create New Prediction Market with Enhanced Validation
+(define-public (create-market
+    (asset-name (string-ascii 32))
+    (start-price uint)
+    (start-block uint)
+    (end-block uint)
+  )
+  (let (
+      (market-id (var-get market-counter))
+      (current-block stacks-block-height)
+    )
+    ;; Comprehensive Authorization & Validation
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (not (var-get protocol-paused)) ERR_PROTOCOL_PAUSED)
+    (asserts! (> end-block start-block) ERR_INVALID_TIMEFRAME)
+    (asserts! (>= (- end-block start-block) MINIMUM_MARKET_DURATION)
+      ERR_INVALID_TIMEFRAME
+    )
+    (asserts! (>= start-block current-block) ERR_INVALID_TIMEFRAME)
+    (asserts! (> start-price u0) ERR_INVALID_PRICE)
+    (asserts!
+      (and (> (len asset-name) u0) (<= (len asset-name) MAXIMUM_ASSET_NAME_LENGTH))
+      ERR_INVALID_PARAMETER
+    )
+    ;; Initialize Market Data
+    (map-set markets market-id {
+      creator: tx-sender,
+      asset-name: asset-name,
+      start-price: start-price,
+      end-price: u0,
+      total-up-stake: u0,
+      total-down-stake: u0,
+      start-block: start-block,
+      end-block: end-block,
+      resolution-block: u0,
+      resolved: false,
+      total-participants: u0,
+      creation-block: current-block,
+    })
+    ;; Update Protocol State
+    (var-set market-counter (+ market-id u1))
+    (var-set active-markets-count (+ (var-get active-markets-count) u1))
+    (ok market-id)
+  )
+)
