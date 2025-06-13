@@ -466,3 +466,88 @@
     }))
   )
 )
+
+;; Advanced Platform Analytics Dashboard
+(define-read-only (get-platform-stats)
+  (let (
+      (contract-balance (stx-get-balance (as-contract tx-sender)))
+      (total-volume-local (var-get total-volume))
+      (total-fees (var-get total-fees-collected))
+      (total-payouts-local (var-get total-payouts))
+    )
+    (ok {
+      total-markets: (var-get market-counter),
+      active-markets: (var-get active-markets-count),
+      total-volume: total-volume-local,
+      total-fees: total-fees,
+      total-payouts: total-payouts-local,
+      contract-balance: contract-balance,
+      protocol-revenue: total-fees,
+      volume-to-fee-ratio: (if (> total-fees u0)
+        (/ total-volume-local total-fees)
+        u0
+      ),
+      is-paused: (var-get protocol-paused),
+      utilization-rate: (if (> contract-balance u0)
+        (/ (* total-volume-local u100) contract-balance)
+        u0
+      ),
+    })
+  )
+)
+
+;; Protocol Configuration Overview
+(define-read-only (get-platform-config)
+  (ok {
+    oracle-address: (var-get oracle-address),
+    minimum-stake: (var-get minimum-stake),
+    platform-fee: (var-get platform-fee-percentage),
+    max-fee-cap: MAX_FEE_PERCENTAGE,
+    minimum-duration: MINIMUM_MARKET_DURATION,
+    protocol-paused: (var-get protocol-paused),
+    protocol-name: PROTOCOL_NAME,
+    protocol-version: PROTOCOL_VERSION,
+  })
+)
+
+;; Market Analytics Retrieval
+(define-read-only (get-market-analytics (market-id uint))
+  (match (map-get? market-analytics market-id)
+    analytics (ok analytics)
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; ADMINISTRATIVE & GOVERNANCE FUNCTIONS
+
+;; Oracle Address Management
+(define-public (set-oracle-address (new-address principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (not (is-eq new-address CONTRACT_OWNER)) ERR_INVALID_PARAMETER)
+    (asserts! (is-standard new-address) ERR_INVALID_ADDRESS)
+    (var-set oracle-address new-address)
+    (ok true)
+  )
+)
+
+;; Minimum Stake Configuration
+(define-public (set-minimum-stake (new-minimum uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (> new-minimum u0) ERR_INVALID_PARAMETER)
+    (asserts! (<= new-minimum u10000000) ERR_INVALID_PARAMETER) ;; Max 10 STX minimum
+    (var-set minimum-stake new-minimum)
+    (ok true)
+  )
+)
+
+;; Platform Fee Management with Safety Cap
+(define-public (set-platform-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (<= new-fee MAX_FEE_PERCENTAGE) ERR_INVALID_PARAMETER)
+    (var-set platform-fee-percentage new-fee)
+    (ok true)
+  )
+)
