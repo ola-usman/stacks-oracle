@@ -370,3 +370,336 @@
     )
   )
 )
+
+;; ADVANCED QUERY INTERFACE
+
+;; Comprehensive Market Information Retrieval
+(define-read-only (get-market-details (market-id uint))
+  (match (map-get? markets market-id)
+    market (let (
+        (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+        (current-block stacks-block-height)
+      )
+      (ok (merge market {
+        total-pool: total-pool,
+        up-percentage: (if (> total-pool u0)
+          (/ (* (get total-up-stake market) u100) total-pool)
+          u50
+        ),
+        down-percentage: (if (> total-pool u0)
+          (/ (* (get total-down-stake market) u100) total-pool)
+          u50
+        ),
+        is-active: (and
+          (>= current-block (get start-block market))
+          (< current-block (get end-block market))
+          (not (get resolved market))
+        ),
+        time-remaining: (if (< current-block (get end-block market))
+          (- (get end-block market) current-block)
+          u0
+        ),
+        market-age: (- current-block (get creation-block market)),
+      }))
+    )
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; Enhanced User Prediction Analytics
+(define-read-only (get-user-prediction-details
+    (market-id uint)
+    (user principal)
+  )
+  (match (map-get? user-predictions {
+    market-id: market-id,
+    user: user,
+  })
+    prediction (match (map-get? markets market-id)
+      market (let (
+          (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+          (user-stake (get stake prediction))
+        )
+        (ok (merge prediction {
+          stake-percentage: (if (> total-pool u0)
+            (/ (* user-stake u100) total-pool)
+            u0
+          ),
+          potential-return: (if (and (> total-pool u0) (> user-stake u0))
+            (if (is-eq (get prediction prediction) PREDICTION_UP)
+              (/ total-pool (get total-up-stake market))
+              (/ total-pool (get total-down-stake market))
+            )
+            u0
+          ),
+        }))
+      )
+      ERR_MARKET_NOT_FOUND
+    )
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; Comprehensive User Performance Metrics
+(define-read-only (get-user-stats (user principal))
+  (let ((stats (default-to {
+      total-predictions: u0,
+      total-winnings: u0,
+      total-losses: u0,
+      win-rate: u0,
+      last-activity: u0,
+    }
+      (map-get? user-stats user)
+    )))
+    (ok (merge stats {
+      net-profit: (if (>= (get total-winnings stats) (get total-losses stats))
+        (- (get total-winnings stats) (get total-losses stats))
+        u0
+      ),
+      total-volume: (+ (get total-winnings stats) (get total-losses stats)),
+      profit-margin: (if (> (+ (get total-winnings stats) (get total-losses stats)) u0)
+        (/ (* (- (get total-winnings stats) (get total-losses stats)) u100)
+          (+ (get total-winnings stats) (get total-losses stats))
+        )
+        u0
+      ),
+    }))
+  )
+)
+
+;; Advanced Platform Analytics Dashboard
+(define-read-only (get-platform-stats)
+  (let (
+      (contract-balance (stx-get-balance (as-contract tx-sender)))
+      (total-volume-local (var-get total-volume))
+      (total-fees (var-get total-fees-collected))
+      (total-payouts-local (var-get total-payouts))
+    )
+    (ok {
+      total-markets: (var-get market-counter),
+      active-markets: (var-get active-markets-count),
+      total-volume: total-volume-local,
+      total-fees: total-fees,
+      total-payouts: total-payouts-local,
+      contract-balance: contract-balance,
+      protocol-revenue: total-fees,
+      volume-to-fee-ratio: (if (> total-fees u0)
+        (/ total-volume-local total-fees)
+        u0
+      ),
+      is-paused: (var-get protocol-paused),
+      utilization-rate: (if (> contract-balance u0)
+        (/ (* total-volume-local u100) contract-balance)
+        u0
+      ),
+    })
+  )
+)
+
+;; Protocol Configuration Overview
+(define-read-only (get-platform-config)
+  (ok {
+    oracle-address: (var-get oracle-address),
+    minimum-stake: (var-get minimum-stake),
+    platform-fee: (var-get platform-fee-percentage),
+    max-fee-cap: MAX_FEE_PERCENTAGE,
+    minimum-duration: MINIMUM_MARKET_DURATION,
+    protocol-paused: (var-get protocol-paused),
+    protocol-name: PROTOCOL_NAME,
+    protocol-version: PROTOCOL_VERSION,
+  })
+)
+
+;; Market Analytics Retrieval
+(define-read-only (get-market-analytics (market-id uint))
+  (match (map-get? market-analytics market-id)
+    analytics (ok analytics)
+    ERR_MARKET_NOT_FOUND
+  )
+)
+
+;; ADMINISTRATIVE & GOVERNANCE FUNCTIONS
+
+;; Oracle Address Management
+(define-public (set-oracle-address (new-address principal))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (not (is-eq new-address CONTRACT_OWNER)) ERR_INVALID_PARAMETER)
+    (asserts! (is-standard new-address) ERR_INVALID_ADDRESS)
+    (var-set oracle-address new-address)
+    (ok true)
+  )
+)
+
+;; Minimum Stake Configuration
+(define-public (set-minimum-stake (new-minimum uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (> new-minimum u0) ERR_INVALID_PARAMETER)
+    (asserts! (<= new-minimum u10000000) ERR_INVALID_PARAMETER) ;; Max 10 STX minimum
+    (var-set minimum-stake new-minimum)
+    (ok true)
+  )
+)
+
+;; Platform Fee Management with Safety Cap
+(define-public (set-platform-fee (new-fee uint))
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (<= new-fee MAX_FEE_PERCENTAGE) ERR_INVALID_PARAMETER)
+    (var-set platform-fee-percentage new-fee)
+    (ok true)
+  )
+)
+
+;; Emergency Protocol Controls
+(define-public (toggle-protocol-pause)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (var-set protocol-paused (not (var-get protocol-paused)))
+    (ok (var-get protocol-paused))
+  )
+)
+
+;; Protocol Revenue Management
+(define-public (withdraw-fees (amount uint))
+  (let (
+      (contract-balance (stx-get-balance (as-contract tx-sender)))
+      (max-withdrawal (/ contract-balance u2)) ;; Maximum 50% withdrawal safety
+    )
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (<= amount contract-balance) ERR_INSUFFICIENT_BALANCE)
+    (asserts! (<= amount max-withdrawal) ERR_WITHDRAWAL_LIMIT)
+    (try! (as-contract (stx-transfer? amount (as-contract tx-sender) CONTRACT_OWNER)))
+    (ok amount)
+  )
+)
+
+;; PRIVATE UTILITY FUNCTIONS
+
+;; Enhanced User Statistics Management
+(define-private (update-user-stats
+    (user principal)
+    (amount uint)
+    (is-win bool)
+  )
+  (let (
+      (current-stats (default-to {
+        total-predictions: u0,
+        total-winnings: u0,
+        total-losses: u0,
+        win-rate: u0,
+        last-activity: u0,
+      }
+        (map-get? user-stats user)
+      ))
+      (new-predictions (+ (get total-predictions current-stats) u1))
+      (new-winnings (if is-win
+        (+ (get total-winnings current-stats) amount)
+        (get total-winnings current-stats)
+      ))
+      (new-losses (if (not is-win)
+        (+ (get total-losses current-stats) amount)
+        (get total-losses current-stats)
+      ))
+    )
+    (let (
+        (wins (if is-win
+          (+ u1 u0)
+          u0
+        )) ;; Simplified win counting
+        (new-win-rate (if (> new-predictions u0)
+          (/ (* wins u100) new-predictions)
+          u0
+        ))
+      )
+      (map-set user-stats user {
+        total-predictions: new-predictions,
+        total-winnings: new-winnings,
+        total-losses: new-losses,
+        win-rate: new-win-rate,
+        last-activity: stacks-block-height,
+      })
+    )
+  )
+)
+
+;; User Activity Tracking
+(define-private (update-user-activity (user principal))
+  (let ((current-stats (default-to {
+      total-predictions: u0,
+      total-winnings: u0,
+      total-losses: u0,
+      win-rate: u0,
+      last-activity: u0,
+    }
+      (map-get? user-stats user)
+    )))
+    (map-set user-stats user
+      (merge current-stats { last-activity: stacks-block-height })
+    )
+  )
+)
+
+;; Market Performance Analytics Calculator
+(define-private (calculate-market-analytics
+    (market-id uint)
+    (market {
+      creator: principal,
+      asset-name: (string-ascii 32),
+      start-price: uint,
+      end-price: uint,
+      total-up-stake: uint,
+      total-down-stake: uint,
+      start-block: uint,
+      end-block: uint,
+      resolution-block: uint,
+      resolved: bool,
+      total-participants: uint,
+      creation-block: uint,
+    })
+    (end-price uint)
+  )
+  (let (
+      (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+      (participation-rate (if (> (get total-participants market) u0)
+        (/ (* (get total-participants market) u100)
+          (get total-participants market)
+        )
+        u0
+      ))
+      (price-change (if (> end-price (get start-price market))
+        (- end-price (get start-price market))
+        (- (get start-price market) end-price)
+      ))
+      (volatility-score (if (> (get start-price market) u0)
+        (/ (* price-change u100) (get start-price market))
+        u0
+      ))
+      (resolution-time (- (get resolution-block market) (get end-block market)))
+    )
+    (map-set market-analytics market-id {
+      participation-rate: participation-rate,
+      volatility-score: volatility-score,
+      final-odds: (if (> total-pool u0)
+        (/ (* (get total-up-stake market) u100) total-pool)
+        u50
+      ),
+      resolution-time: resolution-time,
+    })
+  )
+)
+
+;; PROTOCOL METADATA & VERSIONING
+
+;; Protocol Information Query
+(define-read-only (get-protocol-info)
+  (ok {
+    name: PROTOCOL_NAME,
+    version: PROTOCOL_VERSION,
+    network: "Stacks Layer 2",
+    security-model: "Bitcoin-anchored via Proof-of-Transfer",
+    governance: "Decentralized with owner controls",
+    launch-block: u0, ;; To be set at deployment
+  })
+)
