@@ -551,3 +551,92 @@
     (ok true)
   )
 )
+
+;; Emergency Protocol Controls
+(define-public (toggle-protocol-pause)
+  (begin
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (var-set protocol-paused (not (var-get protocol-paused)))
+    (ok (var-get protocol-paused))
+  )
+)
+
+;; Protocol Revenue Management
+(define-public (withdraw-fees (amount uint))
+  (let (
+      (contract-balance (stx-get-balance (as-contract tx-sender)))
+      (max-withdrawal (/ contract-balance u2)) ;; Maximum 50% withdrawal safety
+    )
+    (asserts! (is-eq tx-sender CONTRACT_OWNER) ERR_OWNER_ONLY)
+    (asserts! (<= amount contract-balance) ERR_INSUFFICIENT_BALANCE)
+    (asserts! (<= amount max-withdrawal) ERR_WITHDRAWAL_LIMIT)
+    (try! (as-contract (stx-transfer? amount (as-contract tx-sender) CONTRACT_OWNER)))
+    (ok amount)
+  )
+)
+
+;; PRIVATE UTILITY FUNCTIONS
+
+;; Enhanced User Statistics Management
+(define-private (update-user-stats
+    (user principal)
+    (amount uint)
+    (is-win bool)
+  )
+  (let (
+      (current-stats (default-to {
+        total-predictions: u0,
+        total-winnings: u0,
+        total-losses: u0,
+        win-rate: u0,
+        last-activity: u0,
+      }
+        (map-get? user-stats user)
+      ))
+      (new-predictions (+ (get total-predictions current-stats) u1))
+      (new-winnings (if is-win
+        (+ (get total-winnings current-stats) amount)
+        (get total-winnings current-stats)
+      ))
+      (new-losses (if (not is-win)
+        (+ (get total-losses current-stats) amount)
+        (get total-losses current-stats)
+      ))
+    )
+    (let (
+        (wins (if is-win
+          (+ u1 u0)
+          u0
+        )) ;; Simplified win counting
+        (new-win-rate (if (> new-predictions u0)
+          (/ (* wins u100) new-predictions)
+          u0
+        ))
+      )
+      (map-set user-stats user {
+        total-predictions: new-predictions,
+        total-winnings: new-winnings,
+        total-losses: new-losses,
+        win-rate: new-win-rate,
+        last-activity: stacks-block-height,
+      })
+    )
+  )
+)
+
+;; User Activity Tracking
+(define-private (update-user-activity (user principal))
+  (let ((current-stats (default-to {
+      total-predictions: u0,
+      total-winnings: u0,
+      total-losses: u0,
+      win-rate: u0,
+      last-activity: u0,
+    }
+      (map-get? user-stats user)
+    )))
+    (map-set user-stats user
+      (merge current-stats { last-activity: stacks-block-height })
+    )
+  )
+)
