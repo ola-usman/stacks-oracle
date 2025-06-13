@@ -640,3 +640,66 @@
     )
   )
 )
+
+;; Market Performance Analytics Calculator
+(define-private (calculate-market-analytics
+    (market-id uint)
+    (market {
+      creator: principal,
+      asset-name: (string-ascii 32),
+      start-price: uint,
+      end-price: uint,
+      total-up-stake: uint,
+      total-down-stake: uint,
+      start-block: uint,
+      end-block: uint,
+      resolution-block: uint,
+      resolved: bool,
+      total-participants: uint,
+      creation-block: uint,
+    })
+    (end-price uint)
+  )
+  (let (
+      (total-pool (+ (get total-up-stake market) (get total-down-stake market)))
+      (participation-rate (if (> (get total-participants market) u0)
+        (/ (* (get total-participants market) u100)
+          (get total-participants market)
+        )
+        u0
+      ))
+      (price-change (if (> end-price (get start-price market))
+        (- end-price (get start-price market))
+        (- (get start-price market) end-price)
+      ))
+      (volatility-score (if (> (get start-price market) u0)
+        (/ (* price-change u100) (get start-price market))
+        u0
+      ))
+      (resolution-time (- (get resolution-block market) (get end-block market)))
+    )
+    (map-set market-analytics market-id {
+      participation-rate: participation-rate,
+      volatility-score: volatility-score,
+      final-odds: (if (> total-pool u0)
+        (/ (* (get total-up-stake market) u100) total-pool)
+        u50
+      ),
+      resolution-time: resolution-time,
+    })
+  )
+)
+
+;; PROTOCOL METADATA & VERSIONING
+
+;; Protocol Information Query
+(define-read-only (get-protocol-info)
+  (ok {
+    name: PROTOCOL_NAME,
+    version: PROTOCOL_VERSION,
+    network: "Stacks Layer 2",
+    security-model: "Bitcoin-anchored via Proof-of-Transfer",
+    governance: "Decentralized with owner controls",
+    launch-block: u0, ;; To be set at deployment
+  })
+)
